@@ -1,4 +1,6 @@
 # Calculadora PERT
+# link de descarga:
+# https://drive.google.com/file/d/1aHN7gZOlE16GFv6aaUD_iaV4ccutdIdy/view?usp=sharing
 
 import tkinter as tk
 from tkinter import ttk, messagebox
