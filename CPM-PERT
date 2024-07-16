@@ -1,0 +1,164 @@
+# Calculadora CPM-PERT
+
+import tkinter as tk
+from tkinter import ttk, messagebox
+import pandas as pd
+
+# Definición de la clase Actividad para representar cada actividad
+class Actividad:
+    def __init__(self, nombre, precedentes, t_e, varianza):
+        self.nombre = nombre  # Nombre de la actividad
+        self.precedentes = precedentes  # Actividades precedentes
+        self.t_e = t_e  # Tiempo esperado
+        self.varianza = varianza  # Varianza
+        self.inicio_mas_temprano = 0  # Inicio más temprano
+        self.fin_mas_temprano = 0  # Fin más temprano
+        self.inicio_mas_tardio = float('inf')  # Inicio más tardío
+        self.fin_mas_tardio = float('inf')  # Fin más tardío
+        self.holgura = 0  # Holgura
+
+# Función para calcular el tiempo esperado (t_e) basado en tiempos optimista, más probable y pesimista
+def calcular_te(a, m, b):
+    return (a + 4 * m + b) / 6
+
+# Función para calcular la varianza basada en tiempos optimista y pesimista
+def calcular_varianza(a, b):
+    return ((b - a) / 6) ** 2
+
+# Paso hacia adelante (Forward pass) para calcular tiempos más tempranos
+def paso_hacia_adelante(actividades):
+    for actividad in actividades.values():
+        if not actividad.precedentes:
+            actividad.fin_mas_temprano = actividad.t_e
+        else:
+            actividad.inicio_mas_temprano = max([actividades[precedente].fin_mas_temprano for precedente in actividad.precedentes])
+            actividad.fin_mas_temprano = actividad.inicio_mas_temprano + actividad.t_e
+
+# Paso hacia atrás (Backward pass) para calcular tiempos más tardíos y holguras
+def paso_hacia_atras(actividades):
+    for actividad in reversed(list(actividades.values())):
+        if actividad.fin_mas_tardio == float('inf'):
+            actividad.fin_mas_tardio = actividad.fin_mas_temprano
+        actividad.inicio_mas_tardio = actividad.fin_mas_tardio - actividad.t_e
+        for precedente in actividad.precedentes:
+            actividades[precedente].fin_mas_tardio = min(actividades[precedente].fin_mas_tardio, actividad.inicio_mas_tardio)
+
+# Función para calcular y asignar la holgura a cada actividad
+def calcular_holgura(actividades):
+    for actividad in actividades.values():
+        actividad.holgura = actividad.inicio_mas_tardio - actividad.inicio_mas_temprano
+
+# Función para identificar la ruta crítica basada en la holgura igual a cero
+def identificar_ruta_critica(actividades):
+    ruta_critica = []
+    for actividad in actividades.values():
+        if actividad.holgura == 0:
+            ruta_critica.append(actividad.nombre)
+    return ruta_critica
+
+# Función para parsear la entrada de usuario y crear objetos Actividad
+def parsear_entrada(nombres_texto, a_texto, m_texto, b_texto, precedentes_texto):
+    nombres_actividades = nombres_texto.strip().split()  # Nombres de actividades
+    tiempos_a = list(map(float, a_texto.strip().split()))  # Tiempos optimistas
+    tiempos_m = list(map(float, m_texto.strip().split()))  # Tiempos más probables
+    tiempos_b = list(map(float, b_texto.strip().split()))  # Tiempos pesimistas
+    precedencias = {}
+    
+    # Parseo de las precedencias de las actividades
+    for par in precedentes_texto.strip().split(';'):
+        actividad, precedentes = par.split(':')
+        precedencias[actividad.strip()] = precedentes.strip().split(',') if precedentes.strip() else []
+    
+    actividades = {}
+    # Creación de objetos Actividad con sus respectivos tiempos
+    for i, nombre in enumerate(nombres_actividades):
+        t_e = calcular_te(tiempos_a[i], tiempos_m[i], tiempos_b[i])
+        varianza = calcular_varianza(tiempos_a[i], tiempos_b[i])
+        actividades[nombre] = Actividad(nombre, precedencias[nombre], t_e, varianza)
+    
+    return actividades
+
+# Función principal para calcular la ruta crítica y mostrar resultados
+def calcular():
+    nombres_texto = entry_nombres.get()
+    a_texto = entry_a.get()
+    m_texto = entry_m.get()
+    b_texto = entry_b.get()
+    precedentes_texto = entry_precedentes.get()
+    
+    global actividades
+    actividades = parsear_entrada(nombres_texto, a_texto, m_texto, b_texto, precedentes_texto)
+    
+    paso_hacia_adelante(actividades)
+    paso_hacia_atras(actividades)
+    calcular_holgura(actividades)
+    ruta_critica = identificar_ruta_critica(actividades)
+    duracion_critica = actividades[ruta_critica[-1]].fin_mas_temprano
+    
+    # Preparación de los resultados en un DataFrame
+    resultados = []
+    for actividad in actividades.values():
+        resultados.append([
+            actividad.nombre, actividad.t_e, actividad.inicio_mas_temprano, actividad.fin_mas_temprano,
+            actividad.inicio_mas_tardio, actividad.fin_mas_tardio, actividad.holgura, "SI" if actividad.nombre in ruta_critica else "NO"
+        ])
+    
+    df_resultado = pd.DataFrame(resultados, columns=["Actividad", "tij", "CI", "CF", "LI", "LF", "H", "RUTA CRÍTICA"])
+    ventana_resultado(df_resultado, ruta_critica, duracion_critica)
+
+# Función para mostrar la ventana de resultados
+def ventana_resultado(df, ruta_critica, duracion_critica):
+    top = tk.Toplevel()
+    top.title("Resultados")
+    
+    cols = list(df.columns)
+    tree_resultado = ttk.Treeview(top, columns=cols, show='headings')
+    
+    for col in cols:
+        tree_resultado.heading(col, text=col)
+        tree_resultado.column(col, minwidth=0, width=100)
+    
+    for _, row in df.iterrows():
+        tree_resultado.insert('', tk.END, values=list(row))
+    
+    tree_resultado.pack(expand=True, fill='both')
+    
+    etiqueta_ruta_critica = tk.Label(top, text=f"Ruta Crítica: {' -> '.join(ruta_critica)}")
+    etiqueta_ruta_critica.pack()
+    
+    etiqueta_duracion_critica = tk.Label(top, text=f"Duración de la Ruta Crítica: {duracion_critica} semanas")
+    etiqueta_duracion_critica.pack()
+
+# Configuración y creación de la interfaz gráfica
+raiz = tk.Tk()
+raiz.title("PERT")
+
+marco = tk.Frame(raiz)
+marco.pack(pady=10)
+
+# Interfaz gráfica: etiquetas y entradas para ingresar datos
+tk.Label(marco, text="Nombres de las actividades (separados por espacios):").grid(row=0, column=0)
+entry_nombres = tk.Entry(marco, width=50)
+entry_nombres.grid(row=0, column=1)
+
+tk.Label(marco, text="Tiempos optimistas (a) (separados por espacios):").grid(row=1, column=0)
+entry_a = tk.Entry(marco, width=50)
+entry_a.grid(row=1, column=1)
+
+tk.Label(marco, text="Tiempos más probables (m) (separados por espacios):").grid(row=2, column=0)
+entry_m = tk.Entry(marco, width=50)
+entry_m.grid(row=2, column=1)
+
+tk.Label(marco, text="Tiempos pesimistas (b) (separados por espacios):").grid(row=3, column=0)
+entry_b = tk.Entry(marco, width=50)
+entry_b.grid(row=3, column=1)
+
+tk.Label(marco, text="Precedencias (formato A: ; B:A; C:A,D; ...):").grid(row=4, column=0)
+entry_precedentes = tk.Entry(marco, width=50)
+entry_precedentes.grid(row=4, column=1)
+
+# Botón para calcular
+boton_calcular = tk.Button(raiz, text="Calcular", command=calcular)
+boton_calcular.pack(pady=10)
+
+raiz.mainloop()
