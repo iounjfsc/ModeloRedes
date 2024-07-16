@@ -1,4 +1,6 @@
 # Calculadora de la Contraccion de la Red
+# link de descarga:
+# https://drive.google.com/file/d/1ANrbTz9TKz2bTlgpEqEFVnhLEsW0Ckoo/view?usp=sharing
 
 import tkinter as tk
 from tkinter import ttk, messagebox
