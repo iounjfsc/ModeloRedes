@@ -1,0 +1,179 @@
+# Calculadora de la Contraccion de la Red
+
+import tkinter as tk
+from tkinter import ttk, messagebox
+import pandas as pd
+import networkx as nx
+
+# Función para calcular el tiempo esperado (tij)
+def calcular_tij(aij, mij, bij):
+    return (aij + 4 * mij + bij) / 6
+
+# Función para calcular la ruta crítica y la contracción máxima posible
+def calcular():
+    try:
+        if opcion_tiempos.get() == "Tiempos Normales":
+            tij = list(map(float, entry_tiempos.get().split()))
+        else:
+            aij = list(map(float, entry_optimista.get().split()))
+            mij = list(map(float, entry_mas_probable.get().split()))
+            bij = list(map(float, entry_pessimista.get().split()))
+            tij = [calcular_tij(a, m, b) for a, m, b in zip(aij, mij, bij)]
+
+        data = {
+            'Aij': entry_actividades.get().split(),
+            'tij': tij,
+            'Cij': list(map(float, entry_costos.get().split())),
+            't\'ij': list(map(float, entry_tiempos_reducidos.get().split())),
+            'C\'ij': list(map(float, entry_costos_reducidos.get().split()))
+        }
+    except ValueError:
+        messagebox.showerror("Error", "Por favor, introduce números válidos.")
+        return
+
+    # Crear un DataFrame con los datos ingresados
+    df = pd.DataFrame(data)
+
+    # Calcular Mij y Kij
+    df['Mij'] = df['tij'] - df['t\'ij']
+    # Evitar división por cero, reemplazando Mij igual a cero por infinito
+    df['Kij'] = (df['C\'ij'] - df['Cij']) / df['Mij'].replace(0, float('inf'))
+    # Reemplazar infinitos y menos infinitos con 'M' para indicar valores indeterminados
+    df['Kij'] = df['Kij'].replace([float('inf'), -float('inf')], 'M')
+
+    # Obtener las precedencias ingresadas y crear un grafo dirigido
+    precedencia_str = entry_precedencias.get().split(';')
+    precedencia = {}
+    for item in precedencia_str:
+        actividad, preds = item.split(':')
+        preds = preds.split(',')
+        precedencia[actividad.strip()] = [pred.strip() for pred in preds if pred]
+
+    G = nx.DiGraph()
+    # Agregar las relaciones de precedencia al grafo con pesos basados en tij
+    for actividad, preds in precedencia.items():
+        for pred in preds:
+            G.add_edge(pred, actividad, weight=df[df['Aij'] == actividad]['tij'].values[0])
+
+    # Calcular la ruta crítica usando el algoritmo de longest path en un DAG (Direct Acyclic Graph)
+    try:
+        ruta_critica = nx.dag_longest_path(G, weight='weight')
+    except nx.NetworkXNoPath:
+        messagebox.showerror("Error", "No se pudo encontrar una ruta crítica. Verifique las precedencias.")
+        return
+
+    # Filtrar las actividades que pertenecen a la ruta crítica
+    actividades_rc = df[df['Aij'].isin(ruta_critica)].copy()
+    # Calcular el tiempo reducido para las actividades en la ruta crítica
+    actividades_rc.loc[:, 'Tiempo Reducido'] = actividades_rc['tij'] - actividades_rc['Mij']
+    # Calcular el tiempo total antes y después de la contracción
+    tiempo_total_antes = actividades_rc['tij'].sum()
+    tiempo_total_despues = actividades_rc['Tiempo Reducido'].sum()
+    # Calcular el costo total de la contracción
+    costo_total = (actividades_rc['Mij'] * actividades_rc['Kij']).sum()
+
+    # Crear una ventana de resultados
+    resultados = tk.Toplevel(root)
+    resultados.title("Resultados de la Ruta Crítica y Contracción")
+
+    # Etiquetas para mostrar los resultados
+    ttk.Label(resultados, text="Ruta Crítica: " + ' -> '.join(ruta_critica)).grid(column=0, row=0, sticky=tk.W)
+    ttk.Label(resultados, text="Tiempo total antes de la contracción: " + str(tiempo_total_antes)).grid(column=0, row=1, sticky=tk.W)
+    ttk.Label(resultados, text="Tiempo total después de la contracción: " + str(tiempo_total_despues)).grid(column=0, row=2, sticky=tk.W)
+    ttk.Label(resultados, text="Reducción total de tiempo: " + str(tiempo_total_antes - tiempo_total_despues)).grid(column=0, row=3, sticky=tk.W)
+    ttk.Label(resultados, text="Costo total de la contracción: " + str(costo_total)).grid(column=0, row=4, sticky=tk.W)
+
+    # Crear la tabla para mostrar los resultados
+    columnas = ("Aij", "tij", "Cij", "t'ij", "C'ij", "Mij", "Kij", "Tiempo Reducido")
+    tabla = ttk.Treeview(resultados, columns=columnas, show="headings")
+    for col in columnas:
+        tabla.heading(col, text=col)
+        tabla.column(col, anchor="center", width=100, stretch=True)
+
+    # Crear barras de desplazamiento
+    scrollbar_vertical = ttk.Scrollbar(resultados, orient="vertical", command=tabla.yview)
+    scrollbar_horizontal = ttk.Scrollbar(resultados, orient="horizontal", command=tabla.xview)
+    tabla.configure(yscroll=scrollbar_vertical.set, xscroll=scrollbar_horizontal.set)
+
+    # Ubicar la tabla y las barras de desplazamiento en el grid
+    tabla.grid(column=0, row=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+    scrollbar_vertical.grid(column=1, row=5, sticky=(tk.N, tk.S))
+    scrollbar_horizontal.grid(column=0, row=6, sticky=(tk.W, tk.E))
+
+    # Ajustar el ancho de las columnas de forma relativa
+    for col in columnas:
+        tabla.column(col, width=100, stretch=True)
+
+    # Insertar datos en la tabla
+    for i, row in actividades_rc.iterrows():
+        tabla.insert("", "end", values=(row['Aij'], row['tij'], row['Cij'], row['t\'ij'], row['C\'ij'], row['Mij'], row['Kij'], row['Tiempo Reducido']))
+
+# Función para cambiar la visibilidad de los campos de entrada según la opción seleccionada
+def toggle_campos_entrada(*args):
+    if opcion_tiempos.get() == "Tiempos Normales":
+        entry_tiempos.grid(column=1, row=2, padx=5, pady=5, sticky=tk.W)
+        entry_optimista.grid_forget()
+        entry_mas_probable.grid_forget()
+        entry_pessimista.grid_forget()
+    else:
+        entry_tiempos.grid_forget()
+        entry_optimista.grid(column=1, row=2, padx=5, pady=5, sticky=tk.W)
+        entry_mas_probable.grid(column=1, row=3, padx=5, pady=5, sticky=tk.W)
+        entry_pessimista.grid(column=1, row=4, padx=5, pady=5, sticky=tk.W)
+
+# Crear la ventana principal
+root = tk.Tk()
+root.title("Calculadora de Ruta Crítica y Contracción")
+
+# Crear los widgets
+marco_entrada = ttk.Frame(root, padding="10 10 10 10")
+marco_entrada.grid(column=0, row=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+# Etiquetas y campos de entrada para ingresar los datos
+ttk.Label(marco_entrada, text="Actividades (ej. A, B, C, D):").grid(column=0, row=0, sticky=tk.W)
+entry_actividades = ttk.Entry(marco_entrada, width=50)
+entry_actividades.grid(column=1, row=0, padx=5, pady=5)
+
+# Opción para seleccionar el tipo de tiempos
+opcion_tiempos = tk.StringVar(value="Tiempos Normales")
+opcion_tiempos.trace("w", toggle_campos_entrada)
+
+ttk.Label(marco_entrada, text="Selecciona el tipo de tiempos:").grid(column=0, row=1, sticky=tk.W)
+ttk.Radiobutton(marco_entrada, text="Tiempos Normales", variable=opcion_tiempos, value="Tiempos Normales").grid(column=1, row=1, sticky=tk.W)
+ttk.Radiobutton(marco_entrada, text="Tiempos Optimistas, Más Probables y Pesimistas", variable=opcion_tiempos, value="Optimista, Más Probable, Pesimista").grid(column=2, row=1, sticky=tk.W)
+
+# Campos de entrada para los tiempos
+ttk.Label(marco_entrada, text="Tiempos normales (ej. 3 5 2 4):").grid(column=0, row=2, sticky=tk.W)
+entry_tiempos = ttk.Entry(marco_entrada, width=50)
+
+ttk.Label(marco_entrada, text="Tiempos optimistas (ej. 2 4 1 3):").grid(column=0, row=2, sticky=tk.W)
+entry_optimista = ttk.Entry(marco_entrada, width=50)
+
+ttk.Label(marco_entrada, text="Tiempos más probables (ej. 3 5 2 4):").grid(column=0, row=3, sticky=tk.W)
+entry_mas_probable = ttk.Entry(marco_entrada, width=50)
+
+ttk.Label(marco_entrada, text="Tiempos pesimistas (ej. 4 6 3 5):").grid(column=0, row=4, sticky=tk.W)
+entry_pessimista = ttk.Entry(marco_entrada, width=50)
+
+# Otros campos de entrada
+ttk.Label(marco_entrada, text="Costos normales (ej. 100 200 150 250):").grid(column=0, row=5, sticky=tk.W)
+entry_costos = ttk.Entry(marco_entrada, width=50)
+entry_costos.grid(column=1, row=5, padx=5, pady=5)
+
+ttk.Label(marco_entrada, text="Tiempos reducidos (ej. 2 4 1 3):").grid(column=0, row=6, sticky=tk.W)
+entry_tiempos_reducidos = ttk.Entry(marco_entrada, width=50)
+entry_tiempos_reducidos.grid(column=1, row=6, padx=5, pady=5)
+
+ttk.Label(marco_entrada, text="Costos reducidos (ej. 150 250 200 300):").grid(column=0, row=7, sticky=tk.W)
+entry_costos_reducidos = ttk.Entry(marco_entrada, width=50)
+entry_costos_reducidos.grid(column=1, row=7, padx=5, pady=5)
+
+ttk.Label(marco_entrada, text="Precedencias (ej. A: ; B:A; C:A,D; ...):").grid(column=0, row=8, sticky=tk.W)
+entry_precedencias = ttk.Entry(marco_entrada, width=50)
+entry_precedencias.grid(column=1, row=8, padx=5, pady=5)
+
+# Botón para calcular la ruta crítica y la contracción
+ttk.Button(marco_entrada, text="Calcular", command=calcular).grid(column=1, row=9, pady=10)
+
+# Ejecutar la aplicación
+root.mainloop()
